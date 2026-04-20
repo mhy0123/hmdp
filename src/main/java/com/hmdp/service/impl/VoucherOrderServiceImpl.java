@@ -1,5 +1,5 @@
 package com.hmdp.service.impl;
-
+import org.springframework.core.io.ClassPathResource;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
@@ -17,11 +17,13 @@ import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 
 /**
  * <p>
@@ -42,8 +44,32 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private StringRedisTemplate redisTemplate;
     @Resource
     private RedissonClient redissonClient;
+    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
+    static {
+        SECKILL_SCRIPT = new DefaultRedisScript<>();
+        SECKILL_SCRIPT.setLocation( new ClassPathResource("seckill.lua"));
+        SECKILL_SCRIPT.setResultType(Long.class);
 
+    }
     @Override
+    public Result seckillVoucher(Long voucherId) {
+        //执行lua脚本
+        Long result = redisTemplate.execute(SECKILL_SCRIPT,
+                Collections.emptyList(),
+                voucherId.toString(),
+                UserHolder.getUser().getId().toString());
+        //判断是否为0
+        //不为0,返回异常
+        if(result != 0){
+            return Result.fail(result == 1 ? "库存不足" : "订单已存在");
+        }
+        //为0
+        Long order = redisIdWorker.nextId("order");
+        //todo 把订单信息传入阻塞队列
+        //返回订单信息
+        return Result.ok(order);
+    }
+    /*@Override
     public Result seckillVoucher(Long voucherId) {
         //查询优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
@@ -78,7 +104,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             //释放锁
             lock.unlock();
         }
-    }
+    }*/
 
     @Transactional
     public Result createOrder(Long voucherId) {

@@ -79,5 +79,10 @@ public class BlogController {
             blog.setIcon(user.getIcon());
         });
         return Result.ok(records);
+
+    }
+    @GetMapping("/{id}")
+    public Result queryBlogById(@PathVariable("id") Long id) {
+        return blogService.queryBlogById(id);
     }
 }

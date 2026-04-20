@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import com.hmdp.dto.Result;
 import com.hmdp.entity.Blog;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
@@ -17,4 +18,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
 
+    @Override
+    public Result queryBlogById(Long id) {
+
+        return Result.ok("功能尚未完成");
+    }
 }
