@@ -4,25 +4,31 @@ import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -35,6 +41,8 @@ import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
+    @Resource
+    private IFollowService followService;
     @Resource
     private IUserService userService;
     @Resource
@@ -129,6 +137,72 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .collect(Collectors.toList());
         //返回
         return Result.ok(userDTOS);
+    }
+
+    @Override
+    public Result saveBlog(Blog blog) {
+        // 获取登录用户
+        UserDTO user = UserHolder.getUser();
+        blog.setUserId(user.getId());
+        // 保存探店笔记
+        boolean isSuccess = save(blog);
+        if(!isSuccess){
+            return Result.ok("笔记新建失败");
+        }
+
+        //查询粉丝id
+        List<Follow> follows =  followService.query().eq("follow_user_id", user.getId()).list();
+        //将笔记id推给所有粉丝
+        for( Follow follow : follows){
+            Long userId = follow.getUserId();
+            String key = BLOG_FEED_KEY + userId;
+            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
+        }
+        // 返回id
+        return Result.ok(blog.getId());
+
+    }
+
+    @Override
+    public Result queryBlogofFollow(Long max, Integer offset) {
+        //获得用户id
+        Long userId = UserHolder.getUser().getId();
+        //查询收件箱 ZREVRANGEBYSCORE key max min [WITHSCORES] LIMIT offset count
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(BLOG_FEED_KEY + userId, 0, max, offset, 2);
+        //解析数据,blog_id,score(时间戳),offset
+        if(typedTuples == null||typedTuples.isEmpty()){
+            return Result.ok();
+        }
+        int os = 1;
+        long minTime = 0L;
+        List<Long> ids = new ArrayList<>();
+        for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
+            long id = Long.valueOf(tuple.getValue());
+            ids.add(id);
+            long score = tuple.getScore().longValue();
+            if(score==minTime){
+                os++;
+            } else{
+                minTime = score;
+                os = 1;
+            }
+        }
+        //根据blog_id查询笔记
+        String idsStr = StrUtil.join(",",ids);
+        List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idsStr + ")").list();
+        for (Blog blog : blogs) {
+            //查询用户信息
+            queryBlogUser(blog);
+            //判断用户是否点赞过了
+            isBlogLiked(blog);
+        }
+        //封装并返回
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setMinTime(minTime);
+        scrollResult.setOffset(os);
+        return Result.ok(scrollResult);
     }
 
     private void queryBlogUser(Blog blog) {
