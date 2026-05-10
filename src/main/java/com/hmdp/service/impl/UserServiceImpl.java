@@ -13,15 +13,20 @@ import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RegexPatterns;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import lombok.extern.slf4j.XSlf4j;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpSession;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -95,6 +100,57 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 6.4返回token
         return Result.ok(token);
     }
+
+    @Override
+    public Result sign() {
+        //查询用户
+        Long userId = UserHolder.getUser().getId();
+        //获得现在时间
+        LocalDateTime now = LocalDateTime.now();
+        //拼接字符串
+        String keySuffix = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key =USER_SIGN_KEY+userId+keySuffix;
+        //获得当前是第几天
+        int day = now.getDayOfMonth();
+        stringRedisTemplate.opsForValue().setBit(key,day-1,true);
+        //返回
+        return Result.ok();
+
+    }
+
+    @Override
+    public Result signCount() {
+        //查询用户
+        Long userId = UserHolder.getUser().getId();
+        //获得现在时间
+        LocalDateTime now = LocalDateTime.now();
+        //拼接字符串
+        String keySuffix = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key =USER_SIGN_KEY+userId+keySuffix;
+        //获得当前是第几天
+        int day = now.getDayOfMonth();
+        //获取截止本日的所有签到记录  BITFIELD  KEY  GET  u14   0
+        List<Long> list = stringRedisTemplate.opsForValue().bitField(key, BitFieldSubCommands.create()
+                .get(BitFieldSubCommands.BitFieldType.unsigned(day)).valueAt(0));
+        if(list==null|| list.isEmpty()){
+            return Result.ok(0);
+        }
+        Long number = list.get(0);
+        int count = 0;
+        while(true){
+            //进行和1的与运算,直到找到连续签到天数
+            if((number&1)==0){
+                break;
+            } else{
+                count++;
+            }
+             number>>>=1;
+        }
+        //进行和1的与运算,直到找到连续签到天数
+
+        return Result.ok(count);
+    }
+
     private User createUserWithPhone(String phone) {
         User user = new User();
         user.setPhone(phone);
